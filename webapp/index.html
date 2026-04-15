@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Flight Tracker</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="app">
+
+    <!-- Loading state -->
+    <div id="loader" class="screen active">
+      <div class="loader-ring"></div>
+      <p class="loader-text">Looking up your flight…</p>
+    </div>
+
+    <!-- Error state -->
+    <div id="error-screen" class="screen" style="display:none">
+      <div class="error-icon">✈️</div>
+      <p class="error-title">Flight Not Found</p>
+      <p class="error-sub" id="error-message">We couldn't locate that flight.</p>
+    </div>
+
+    <!-- Main flight view (populated by JS) -->
+    <div id="flight-screen" class="screen" style="display:none">
+
+      <div class="status-row">
+        <span class="badge" id="status-badge">On Time</span>
+        <span class="demo-tag" id="demo-tag">DEMO</span>
+      </div>
+
+      <div class="flight-header">
+        <span class="flight-number" id="flight-number"></span>
+        <span class="airline-name" id="airline-name"></span>
+      </div>
+
+      <!-- Legs are injected here by JS -->
+      <div id="legs-container"></div>
+
+      <p class="refresh-hint">Auto-refreshes every 60 s</p>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

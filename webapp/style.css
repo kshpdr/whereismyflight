@@ -1,0 +1,340 @@
+/* ── Reset & base ────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0b0e17;
+  --surface:   rgba(255, 255, 255, 0.06);
+  --border:    rgba(255, 255, 255, 0.08);
+  --text:      #f0f0f5;
+  --text-dim:  #8e8e9a;
+  --accent:    #5ebbff;
+  --green:     #34d399;
+  --orange:    #fb923c;
+  --red:       #f87171;
+  --radius:    16px;
+  --radius-sm: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+body {
+  background:
+    radial-gradient(ellipse 120% 60% at 50% -10%, rgba(94, 187, 255, .12) 0%, transparent 60%),
+    var(--bg);
+}
+
+#app {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+  min-height: 100%;
+}
+
+/* ── Screens ─────────────────────────────────────────────────────── */
+.screen { display: none; }
+.screen.active { display: block; animation: fadeUp .35s ease-out both; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Loader ──────────────────────────────────────────────────────── */
+#loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+}
+
+.loader-ring {
+  width: 44px; height: 44px;
+  border: 3px solid var(--surface);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loader-text {
+  margin-top: 18px;
+  color: var(--text-dim);
+  font-size: 15px;
+}
+
+/* ── Error ────────────────────────────────────────────────────────── */
+#error-screen {
+  text-align: center;
+  padding-top: 20vh;
+}
+.error-icon  { font-size: 48px; margin-bottom: 12px; }
+.error-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.error-sub   { color: var(--text-dim); font-size: 14px; }
+
+/* ── Status badge ─────────────────────────────────────────────────── */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  background: rgba(52, 211, 153, .15);
+  color: var(--green);
+}
+.badge.delayed  { background: rgba(251, 146, 60, .15); color: var(--orange); }
+.badge.cancelled { background: rgba(248, 113, 113, .15); color: var(--red); }
+.badge.in-air {
+  background: rgba(94, 187, 255, .15); color: var(--accent);
+}
+.badge.landed { background: rgba(52, 211, 153, .15); color: var(--green); }
+
+.demo-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--text-dim);
+  background: var(--surface);
+  padding: 3px 7px;
+  border-radius: 6px;
+  display: none;
+}
+.demo-tag.visible { display: inline-block; }
+
+/* ── Flight header ────────────────────────────────────────────────── */
+.flight-header {
+  margin-bottom: 18px;
+}
+.flight-number {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  display: block;
+}
+.airline-name {
+  font-size: 14px;
+  color: var(--text-dim);
+  display: block;
+  margin-top: 2px;
+}
+
+/* ── Glass card ───────────────────────────────────────────────────── */
+.glass {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ── Route card ───────────────────────────────────────────────────── */
+.route-card {
+  padding: 22px 20px 18px;
+  margin-bottom: 14px;
+}
+
+.route-endpoints {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.endpoint .iata {
+  font-size: 32px;
+  font-weight: 700;
+  display: block;
+  line-height: 1.1;
+}
+.endpoint .city {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: block;
+  margin-top: 2px;
+  max-width: 130px;
+}
+.endpoint.arr { text-align: right; }
+
+/* ── Progress track ───────────────────────────────────────────────── */
+.progress-track {
+  position: relative;
+  height: 28px;
+  margin: 4px 0 10px;
+}
+
+.track-line {
+  position: absolute;
+  top: 50%;
+  left: 0; right: 0;
+  height: 3px;
+  background: rgba(255,255,255,.08);
+  border-radius: 2px;
+  transform: translateY(-50%);
+}
+
+.track-fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 0%;
+  height: 3px;
+  border-radius: 2px;
+  transform: translateY(-50%);
+  background: linear-gradient(90deg, var(--accent), #a78bfa);
+  transition: width .8s cubic-bezier(.22,1,.36,1);
+}
+
+.plane-icon {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  transform: translate(-50%, -50%);
+  color: var(--accent);
+  filter: drop-shadow(0 0 6px rgba(94,187,255,.4));
+  transition: left .8s cubic-bezier(.22,1,.36,1);
+}
+
+/* ── Time row ─────────────────────────────────────────────────────── */
+.time-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+.time-row .time {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.time-row .duration {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: rgba(255,255,255,.05);
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+/* ── Detail grid ──────────────────────────────────────────────────── */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.detail-card {
+  padding: 16px;
+}
+.detail-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+.detail-key {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.detail-val {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.delay-val {
+  color: var(--orange);
+}
+
+/* ── Multi-leg ────────────────────────────────────────────────────── */
+.route-summary {
+  text-align: center;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.route-path { font-weight: 600; color: var(--text); }
+.route-arrow { color: var(--text-dim); font-weight: 400; }
+
+.leg-wrapper {
+  margin-bottom: 8px;
+}
+.leg-wrapper:last-child { margin-bottom: 0; }
+
+.leg-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+.leg-num {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-dim);
+}
+.leg-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 12px;
+}
+.status-air       { background: rgba(94,187,255,.15); color: var(--accent); }
+.status-landed    { background: rgba(52,211,153,.15); color: var(--green); }
+.status-cancelled { background: rgba(248,113,113,.15); color: var(--red); }
+.status-scheduled { background: var(--surface); color: var(--text-dim); }
+
+/* ── Refresh hint ─────────────────────────────────────────────────── */
+.refresh-hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: .6;
+}
+
+/* ── Utility ──────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:      #f2f2f7;
+    --surface: rgba(0, 0, 0, .04);
+    --border:  rgba(0, 0, 0, .06);
+    --text:    #1c1c1e;
+    --text-dim:#8e8e93;
+  }
+  body {
+    background:
+      radial-gradient(ellipse 120% 60% at 50% -10%, rgba(94, 187, 255, .08) 0%, transparent 60%),
+      var(--bg);
+  }
+  .plane-icon { color: #007aff; }
+  .track-fill { background: linear-gradient(90deg, #007aff, #af52de); }
+}
+
+/* Pulse animation for in-air status */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .55; }
+}
+.badge.in-air { animation: pulse 2s ease-in-out infinite; }
