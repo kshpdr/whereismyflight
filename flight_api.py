@@ -101,6 +101,8 @@ def _compute_leg_timing(leg: dict) -> dict:
         if diff > 0:
             duration_min = round(diff / 60)
 
+    remaining_min = None
+
     if leg["status"] == "Landed":
         progress_pct = 100
     elif leg["status"] == "In Air" and dep_utc and arr_utc:
@@ -109,8 +111,10 @@ def _compute_leg_timing(leg: dict) -> dict:
         elapsed = (now - dep_utc).total_seconds()
         if total > 0:
             progress_pct = max(2, min(98, round(elapsed / total * 100)))
+            remaining_min = max(0, round((total - elapsed) / 60))
 
     leg["duration_min"] = duration_min
+    leg["remaining_min"] = remaining_min
     leg["progress_pct"] = progress_pct
     return leg
 

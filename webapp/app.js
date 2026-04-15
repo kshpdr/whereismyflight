@@ -125,7 +125,7 @@
       </div>
       <div class="time-row">
         <span class="time">${shortTime(depTime)}</span>
-        <span class="duration">${formatDuration(leg.duration_min)}</span>
+        <span class="duration">${durationLabel(leg)}</span>
         <span class="time">${shortTime(arrTime)}</span>
       </div>
     `;
@@ -222,11 +222,18 @@
     return m ? `${m[1]}:${m[2]}` : "—";
   }
 
-  function formatDuration(minutes) {
+  function formatMinutes(minutes) {
     if (!minutes || minutes <= 0) return "—";
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  function durationLabel(leg) {
+    if (leg.status === "In Air" && leg.remaining_min != null) {
+      return `${formatMinutes(leg.remaining_min)} left`;
+    }
+    return formatMinutes(leg.duration_min);
   }
 
   function esc(s) {
