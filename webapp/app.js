@@ -26,7 +26,11 @@
 
   function getFlightParam() {
     const params = new URLSearchParams(window.location.search);
-    return (params.get("flight") || "").trim().toUpperCase() || null;
+    const fromUrl = params.get("flight") || "";
+
+    const fromTg = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || "";
+
+    return (fromUrl || fromTg).trim().toUpperCase() || null;
   }
 
   async function loadFlight(code) {

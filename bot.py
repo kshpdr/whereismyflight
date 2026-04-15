@@ -15,6 +15,7 @@ from telegram.ext import Application, CommandHandler, InlineQueryHandler, Messag
 from flight_api import parse_flight_number, fetch_flight
 
 WEBAPP_BASE_URL: str = os.getenv("WEBAPP_BASE_URL", "")
+MINIAPP_DIRECT_LINK: str = os.getenv("MINIAPP_DIRECT_LINK", "https://t.me/whereismyflightbot/whereismyflight")
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -145,7 +146,7 @@ async def handle_inline(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         description = status
 
-    webapp_url = f"{WEBAPP_BASE_URL}/webapp/index.html?flight={flight_code}"
+    miniapp_url = f"{MINIAPP_DIRECT_LINK}?startapp={flight_code}"
 
     results = [
         InlineQueryResultArticle(
@@ -157,7 +158,7 @@ async def handle_inline(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode="Markdown",
             ),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📱 Live View", url=webapp_url)]
+                [InlineKeyboardButton("📱 Live View", url=miniapp_url)]
             ]),
         )
     ]
