@@ -8,9 +8,13 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from zoneinfo import ZoneInfo
+
 import aiohttp
+import airportsdata
 
 AVIATIONSTACK_KEY: str = os.getenv("AVIATIONSTACK_API_KEY", "")
+AIRPORTS = airportsdata.load("IATA")
 AVIATIONSTACK_URL = "http://api.aviationstack.com/v1/flights"
 
 
@@ -64,11 +68,58 @@ STATUS_MAP = {
 }
 
 
+def _local_iso_to_utc(iso: str, iata: str) -> Optional[datetime]:
+    """Convert an AviationStack 'fake UTC' timestamp to real UTC using airport timezone."""
+    if not iso:
+        return None
+    try:
+        naive = datetime.fromisoformat(iso.replace("+00:00", "").replace("Z", ""))
+        tz_name = (AIRPORTS.get(iata) or {}).get("tz")
+        if tz_name:
+            local_dt = naive.replace(tzinfo=ZoneInfo(tz_name))
+            return local_dt.astimezone(timezone.utc)
+        return naive.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _compute_leg_timing(leg: dict) -> dict:
+    """Add duration_min and progress_pct to a leg dict."""
+    dep = leg["departure"]
+    arr = leg["arrival"]
+    dep_iso = dep.get("actual") or dep.get("estimated") or dep.get("scheduled")
+    arr_iso = arr.get("estimated") or arr.get("scheduled")
+
+    dep_utc = _local_iso_to_utc(dep_iso, dep.get("iata", ""))
+    arr_utc = _local_iso_to_utc(arr_iso, arr.get("iata", ""))
+
+    duration_min = None
+    progress_pct = 0
+
+    if dep_utc and arr_utc:
+        diff = (arr_utc - dep_utc).total_seconds()
+        if diff > 0:
+            duration_min = round(diff / 60)
+
+    if leg["status"] == "Landed":
+        progress_pct = 100
+    elif leg["status"] == "In Air" and dep_utc and arr_utc:
+        now = datetime.now(timezone.utc)
+        total = (arr_utc - dep_utc).total_seconds()
+        elapsed = (now - dep_utc).total_seconds()
+        if total > 0:
+            progress_pct = max(2, min(98, round(elapsed / total * 100)))
+
+    leg["duration_min"] = duration_min
+    leg["progress_pct"] = progress_pct
+    return leg
+
+
 def _normalise_leg(f: dict) -> dict:
     dep = f.get("departure") or {}
     arr = f.get("arrival") or {}
     status_raw = (f.get("flight_status") or "unknown").lower()
-    return {
+    leg = {
         "status": STATUS_MAP.get(status_raw, status_raw.title()),
         "departure": {
             "airport": dep.get("airport", ""),
@@ -92,6 +143,7 @@ def _normalise_leg(f: dict) -> dict:
         },
         "live": bool(f.get("live")),
     }
+    return _compute_leg_timing(leg)
 
 
 def _today_utc() -> str:
@@ -238,6 +290,7 @@ def _generate_demo(flight_iata: str) -> dict:
 
         cursor = arr_estimated + timedelta(minutes=rng.randint(45, 120))
 
+    legs = [_compute_leg_timing(leg) for leg in legs]
     overall = _overall_status(legs)
 
     return {

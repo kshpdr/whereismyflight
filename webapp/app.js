@@ -125,7 +125,7 @@
       </div>
       <div class="time-row">
         <span class="time">${shortTime(depTime)}</span>
-        <span class="duration">${calcDuration(depTime, arrTime)}</span>
+        <span class="duration">${formatDuration(leg.duration_min)}</span>
         <span class="time">${shortTime(arrTime)}</span>
       </div>
     `;
@@ -193,8 +193,7 @@
     const plane = document.querySelector(`.plane-icon[data-leg="${index}"]`);
     if (!fill || !plane) return;
 
-    const statusPct = { "Scheduled": 0, "Landed": 100, "In Air": 50 };
-    const pct = statusPct[leg.status] ?? 0;
+    const pct = leg.progress_pct ?? 0;
 
     fill.style.width = pct + "%";
     plane.style.left = pct + "%";
@@ -223,23 +222,11 @@
     return m ? `${m[1]}:${m[2]}` : "—";
   }
 
-  function calcDuration(depISO, arrISO) {
-    if (!depISO || !arrISO) return "—";
-    const depMin = isoToMinutes(depISO);
-    const arrMin = isoToMinutes(arrISO);
-    if (depMin === null || arrMin === null) return "—";
-    const diff = arrMin - depMin;
-    if (diff <= 0) return "—";
-    const h = Math.floor(diff / 60);
-    const m = diff % 60;
+  function formatDuration(minutes) {
+    if (!minutes || minutes <= 0) return "—";
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  }
-
-  function isoToMinutes(iso) {
-    const m = iso.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-    if (!m) return null;
-    const days = (parseInt(m[2]) - 1) * 31 + parseInt(m[3]);
-    return days * 1440 + parseInt(m[4]) * 60 + parseInt(m[5]);
   }
 
   function esc(s) {
