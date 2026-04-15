@@ -193,22 +193,8 @@
     const plane = document.querySelector(`.plane-icon[data-leg="${index}"]`);
     if (!fill || !plane) return;
 
-    let pct = 0;
-    if (leg.status === "Landed") {
-      pct = 100;
-    } else if (leg.status === "In Air") {
-      const depISO = leg.departure.actual || leg.departure.estimated || leg.departure.scheduled;
-      const arrISO = leg.arrival.estimated || leg.arrival.scheduled;
-      const depMin = isoToMinutes(depISO);
-      const arrMin = isoToMinutes(arrISO);
-      if (depMin !== null && arrMin !== null && arrMin > depMin) {
-        const nowDate = new Date();
-        const nowMin = (nowDate.getUTCMonth() * 31 + nowDate.getUTCDate()) * 1440 + nowDate.getUTCHours() * 60 + nowDate.getUTCMinutes();
-        pct = Math.max(5, Math.min(95, ((nowMin - depMin) / (arrMin - depMin)) * 100));
-      } else {
-        pct = 50;
-      }
-    }
+    const statusPct = { "Scheduled": 0, "Landed": 100, "In Air": 50 };
+    const pct = statusPct[leg.status] ?? 0;
 
     fill.style.width = pct + "%";
     plane.style.left = pct + "%";
