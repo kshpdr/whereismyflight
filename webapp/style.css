@@ -227,6 +227,16 @@ body {
   border-radius: 20px;
 }
 
+/* ── Remaining label ──────────────────────────────────────────────── */
+.remaining-label {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  margin-top: 6px;
+  opacity: .85;
+}
+
 /* ── Detail grid ──────────────────────────────────────────────────── */
 .detail-grid {
   display: grid;

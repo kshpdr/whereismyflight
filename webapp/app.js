@@ -125,9 +125,10 @@
       </div>
       <div class="time-row">
         <span class="time">${shortTime(depTime)}</span>
-        <span class="duration">${durationLabel(leg)}</span>
+        <span class="duration">${formatMinutes(leg.duration_min)}</span>
         <span class="time">${shortTime(arrTime)}</span>
       </div>
+      ${leg.status === "In Air" && leg.remaining_min != null ? `<div class="remaining-label">${formatMinutes(leg.remaining_min)} remaining</div>` : ""}
     `;
     wrapper.appendChild(card);
 
@@ -229,12 +230,6 @@
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
 
-  function durationLabel(leg) {
-    if (leg.status === "In Air" && leg.remaining_min != null) {
-      return `${formatMinutes(leg.remaining_min)} left`;
-    }
-    return formatMinutes(leg.duration_min);
-  }
 
   function esc(s) {
     if (!s) return "";
