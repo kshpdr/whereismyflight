@@ -193,18 +193,20 @@
     const plane = document.querySelector(`.plane-icon[data-leg="${index}"]`);
     if (!fill || !plane) return;
 
-    const depISO = leg.departure.estimated || leg.departure.scheduled;
-    const arrISO = leg.arrival.estimated || leg.arrival.scheduled;
-
     let pct = 0;
     if (leg.status === "Landed") {
       pct = 100;
-    } else if (leg.status === "In Air" && depISO && arrISO) {
-      const depMs = new Date(depISO).getTime();
-      const arrMs = new Date(arrISO).getTime();
-      const total = arrMs - depMs;
-      if (total > 0) {
-        pct = Math.max(0, Math.min(100, ((Date.now() - depMs) / total) * 100));
+    } else if (leg.status === "In Air") {
+      const depISO = leg.departure.actual || leg.departure.estimated || leg.departure.scheduled;
+      const arrISO = leg.arrival.estimated || leg.arrival.scheduled;
+      const depMin = isoToMinutes(depISO);
+      const arrMin = isoToMinutes(arrISO);
+      if (depMin !== null && arrMin !== null && arrMin > depMin) {
+        const nowDate = new Date();
+        const nowMin = (nowDate.getUTCMonth() * 31 + nowDate.getUTCDate()) * 1440 + nowDate.getUTCHours() * 60 + nowDate.getUTCMinutes();
+        pct = Math.max(5, Math.min(95, ((nowMin - depMin) / (arrMin - depMin)) * 100));
+      } else {
+        pct = 50;
       }
     }
 
@@ -231,20 +233,27 @@
 
   function shortTime(iso) {
     if (!iso) return "—";
-    try {
-      return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-    } catch {
-      return iso.slice(11, 16);
-    }
+    const m = iso.match(/T(\d{2}):(\d{2})/);
+    return m ? `${m[1]}:${m[2]}` : "—";
   }
 
   function calcDuration(depISO, arrISO) {
     if (!depISO || !arrISO) return "—";
-    const ms = new Date(arrISO) - new Date(depISO);
-    if (ms <= 0) return "—";
-    const h = Math.floor(ms / 3_600_000);
-    const m = Math.round((ms % 3_600_000) / 60_000);
+    const depMin = isoToMinutes(depISO);
+    const arrMin = isoToMinutes(arrISO);
+    if (depMin === null || arrMin === null) return "—";
+    const diff = arrMin - depMin;
+    if (diff <= 0) return "—";
+    const h = Math.floor(diff / 60);
+    const m = diff % 60;
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  function isoToMinutes(iso) {
+    const m = iso.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!m) return null;
+    const days = (parseInt(m[2]) - 1) * 31 + parseInt(m[3]);
+    return days * 1440 + parseInt(m[4]) * 60 + parseInt(m[5]);
   }
 
   function esc(s) {
