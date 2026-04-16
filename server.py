@@ -11,6 +11,11 @@ from aiohttp import web
 from flight_api import fetch_flight, parse_flight_number
 
 WEBAPP_DIR = Path(__file__).parent / "webapp"
+LANDING_HTML = WEBAPP_DIR / "landing.html"
+
+
+async def handle_landing(request: web.Request) -> web.Response:
+    return web.FileResponse(LANDING_HTML)
 
 
 async def handle_flight_api(request: web.Request) -> web.Response:
@@ -32,6 +37,7 @@ async def handle_health(request: web.Request) -> web.Response:
 
 def create_web_app() -> web.Application:
     app = web.Application()
+    app.router.add_get("/", handle_landing)
     app.router.add_get("/api/flight/{flight}", handle_flight_api)
     app.router.add_get("/health", handle_health)
     app.router.add_static("/webapp", WEBAPP_DIR, show_index=True)
