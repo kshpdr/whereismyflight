@@ -203,8 +203,8 @@ body {
   top: 50%;
   left: 0%;
   transform: translate(-50%, -50%);
-  color: var(--accent);
-  filter: drop-shadow(0 0 6px rgba(94,187,255,.4));
+  font-size: 16px;
+  filter: drop-shadow(0 0 4px rgba(94,187,255,.5));
   transition: left .8s cubic-bezier(.22,1,.36,1);
 }
 
@@ -338,7 +338,6 @@ body {
       radial-gradient(ellipse 120% 60% at 50% -10%, rgba(94, 187, 255, .08) 0%, transparent 60%),
       var(--bg);
   }
-  .plane-icon { color: #007aff; }
   .track-fill { background: linear-gradient(90deg, #007aff, #af52de); }
 }
 

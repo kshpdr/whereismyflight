@@ -1,10 +1,10 @@
-# Where Is My Flight
+# whereismyflight - telegram flight previews
 
-A good friend of mine Alex complained about absence of native flight previews in Telegram compared to iMessages. But we know iMessages sucks. So have to fix this problem ourselves.
+A good friend of mine Alex complained about absence of native flight previews in Telegram compared to iMessages. But we don't want to use iMessage. So have to fix this problem ourselves.
 
-This bot allows you to type in inline in any chat your flight number and generate a live preview. You can pin the message and track your friends flying to you — hopefully with it time flies by quicker.
+This bot allows you to type in inline in any chat your flight number and generate a live preview. You can pin the message and track your friends flying to you — hopefully time flies by quicker and you don't need to wait for your friends for too long.
 
-<!-- TODO: insert demo gif -->
+![](preview.png)
 
 ## Setup
 

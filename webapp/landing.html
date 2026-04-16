@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title> where is my flight</title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0b0e17;
+      --text: #f0f0f5;
+      --dim: #6e6e7a;
+      --accent: #5ebbff;
+      --surface: rgba(255,255,255,.06);
+      --border: rgba(255,255,255,.08);
+    }
+
+    html { height: 100%; }
+    body {
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 60px 20px 40px;
+      background: radial-gradient(ellipse 120% 50% at 50% 0%, rgba(94,187,255,.1) 0%, transparent 60%), var(--bg);
+    }
+
+    .hero {
+      max-width: 480px;
+      text-align: center;
+    }
+
+    .logo {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      color: var(--dim);
+      line-height: 1.5;
+      margin-bottom: 40px;
+    }
+
+    .demo-gif {
+      width: 100%;
+      max-width: 360px;
+      border-radius: 16px;
+      margin-bottom: 24px;
+    }
+
+    /* ── Typing demo ──────────────────────────────────── */
+    .demo-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      text-align: left;
+      overflow: hidden;
+    }
+
+    .input-bar {
+      background: rgba(255,255,255,.04);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 15px;
+      font-family: inherit;
+      color: var(--text);
+      margin-bottom: 16px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-bar .bot-name { color: var(--accent); }
+    .input-bar .flight-text { color: var(--text); }
+    .cursor-blink {
+      display: inline-block;
+      width: 2px;
+      height: 18px;
+      background: var(--accent);
+      margin-left: 1px;
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Preview card ─────────────────────────────────── */
+    .preview {
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      opacity: 0;
+      transform: translateY(10px) scale(.97);
+      transition: all .4s cubic-bezier(.22,1,.36,1);
+    }
+    .preview.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .preview-flight {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .preview-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 12px;
+      background: rgba(94,187,255,.15);
+      color: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { opacity: .55; } }
+
+    .preview-route {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 12px;
+    }
+    .preview-iata { font-size: 26px; font-weight: 700; line-height: 1; }
+    .preview-city { font-size: 11px; color: var(--dim); margin-top: 2px; }
+    .preview-right { text-align: right; }
+
+    .preview-track {
+      position: relative;
+      height: 20px;
+      margin-bottom: 10px;
+    }
+    .preview-track-line {
+      position: absolute;
+      top: 50%; left: 0; right: 0;
+      height: 2px;
+      background: rgba(255,255,255,.08);
+      transform: translateY(-50%);
+      border-radius: 1px;
+    }
+    .preview-track-fill {
+      position: absolute;
+      top: 50%; left: 0;
+      width: 0%;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), #a78bfa);
+      transform: translateY(-50%);
+      border-radius: 1px;
+      transition: width 1s cubic-bezier(.22,1,.36,1);
+    }
+    .preview-plane {
+      position: absolute;
+      top: 50%;
+      left: 0%;
+      transform: translate(-50%, -50%);
+      font-size: 14px;
+      transition: left 1s cubic-bezier(.22,1,.36,1);
+      filter: drop-shadow(0 0 4px rgba(94,187,255,.5));
+    }
+
+    .preview-times {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--dim);
+    }
+    .preview-times span:first-child,
+    .preview-times span:last-child { color: var(--text); font-weight: 600; }
+
+    /* ── CTA ──────────────────────────────────────────── */
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      border-radius: 14px;
+      background: var(--accent);
+      color: #000;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      margin-top: 32px;
+      transition: transform .15s, opacity .15s;
+    }
+    .cta:hover { transform: scale(1.03); }
+    .cta:active { transform: scale(.98); opacity: .9; }
+    .cta svg { width: 20px; height: 20px; }
+
+    .hint {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--dim);
+    }
+    .hint code {
+      background: var(--surface);
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-family: "SF Mono", Monaco, monospace;
+      font-size: 12px;
+    }
+
+    footer {
+      margin-top: auto;
+      padding-top: 48px;
+      font-size: 12px;
+      color: var(--dim);
+      opacity: .5;
+    }
+    footer a { color: var(--dim); }
+  </style>
+</head>
+<body>
+
+  <div class="hero">
+    <div class="logo">✈️</div>
+    <h1>Track any flight,<br>right in Telegram.</h1>
+    <p class="subtitle">Type a flight number in any chat. Get a live preview with status, progress, and gate info — no app needed.</p>
+
+    <div class="demo-box">
+      <div class="input-bar">
+        <span class="bot-name" id="typed-bot"></span><span class="flight-text" id="typed-flight"></span><span class="cursor-blink"></span>
+      </div>
+      <div class="preview" id="preview">
+        <div class="preview-header">
+          <span class="preview-flight">✈️ WN 1933 — Southwest</span>
+          <span class="preview-badge">In Air</span>
+        </div>
+        <div class="preview-route">
+          <div>
+            <div class="preview-iata">SFO</div>
+            <div class="preview-city">San Francisco</div>
+          </div>
+          <div class="preview-right">
+            <div class="preview-iata">DAL</div>
+            <div class="preview-city">Dallas Love Field</div>
+          </div>
+        </div>
+        <div class="preview-track">
+          <div class="preview-track-line"></div>
+          <div class="preview-track-fill" id="demo-fill"></div>
+          <div class="preview-plane" id="demo-plane">✈️</div>
+        </div>
+        <div class="preview-times">
+          <span>13:20</span>
+          <span>3h 35m</span>
+          <span>18:55</span>
+        </div>
+      </div>
+    </div>
+
+    <a class="cta" href="https://t.me/whereismyflightbot">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.53 8.17l-1.84 8.66c-.14.62-.5.77-1.01.48l-2.8-2.06-1.35 1.3c-.15.15-.28.28-.57.28l.2-2.85 5.18-4.68c.23-.2-.05-.31-.35-.12l-6.4 4.03-2.76-.86c-.6-.19-.61-.6.13-.89l10.79-4.16c.5-.18.93.12.78.87z"/></svg>
+      Open in Telegram
+    </a>
+    <p class="hint">Type <code>@whereismyflightbot &lt;flight number&gt;</code> in any chat</p>
+  </div>
+
+  <footer>
+    <a href="https://github.com/kshpdr/whereismyflight">GitHub</a>
+  </footer>
+
+  <script>
+    const botText = "@whereismyflightbot";
+    const flightText = "WN1933";
+    const botEl = document.getElementById("typed-bot");
+    const flightEl = document.getElementById("typed-flight");
+    const preview = document.getElementById("preview");
+    const fill = document.getElementById("demo-fill");
+    const plane = document.getElementById("demo-plane");
+
+    let i = 0;
+    const full = botText + "\u00a0" + flightText;
+
+    function typeNext() {
+      if (i < full.length) {
+        const ch = full[i];
+        if (i < botText.length) {
+          botEl.textContent += ch;
+        } else {
+          flightEl.textContent += ch;
+        }
+        i++;
+        setTimeout(typeNext, 60 + Math.random() * 40);
+      } else {
+        setTimeout(showPreview, 400);
+      }
+    }
+
+    function showPreview() {
+      preview.classList.add("visible");
+      setTimeout(() => {
+        fill.style.width = "38%";
+        plane.style.left = "38%";
+      }, 300);
+    }
+    setTimeout(typeNext, 800);
+  </script>
+</body>
+</html>

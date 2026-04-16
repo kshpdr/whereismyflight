@@ -1,40 +1,85 @@
-"""Flight data service — fetches live data from AviationStack or returns demo fixtures."""
+"""Flight data service — caching layer + demo fallback on top of providers."""
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import random
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from zoneinfo import ZoneInfo
+from providers import (
+    AviationStackProvider, FlightAwareProvider, FlightProvider,
+    compute_leg_timing, overall_status,
+)
 
-import aiohttp
-import airportsdata
+log = logging.getLogger(__name__)
 
-AVIATIONSTACK_KEY: str = os.getenv("AVIATIONSTACK_API_KEY", "")
-AIRPORTS = airportsdata.load("IATA")
-AVIATIONSTACK_URL = "http://api.aviationstack.com/v1/flights"
+# ── Provider setup ────────────────────────────────────────────────
+# Priority: FlightAware AeroAPI > AviationStack > demo mode
+
+_provider: Optional[FlightProvider] = None
+
+FLIGHTAWARE_KEY = os.getenv("FLIGHTAWARE_API_KEY", "")
+AVIATIONSTACK_KEY = os.getenv("AVIATIONSTACK_API_KEY", "")
+
+if FLIGHTAWARE_KEY:
+    _provider = FlightAwareProvider(FLIGHTAWARE_KEY)
+    log.info("Using FlightAware AeroAPI provider")
+elif AVIATIONSTACK_KEY:
+    _provider = AviationStackProvider(AVIATIONSTACK_KEY)
+    log.info("Using AviationStack provider")
+
+
+# ── Cache ─────────────────────────────────────────────────────────
+
+CACHE_TTL_ACTIVE = 300     # 5 min for scheduled / in-air flights
+CACHE_TTL_TERMINAL = 3600  # 1 hour for landed / cancelled
+
+_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _cache_ttl(data: dict) -> int:
+    status = data.get("status", "")
+    if status in ("Landed", "Cancelled"):
+        return CACHE_TTL_TERMINAL
+    return CACHE_TTL_ACTIVE
+
+
+def _cache_get(key: str) -> Optional[dict]:
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+    ts, data = entry
+    ttl = _cache_ttl(data)
+    if time.monotonic() - ts > ttl:
+        del _cache[key]
+        return None
+    return data
+
+
+def _cache_set(key: str, data: dict) -> None:
+    _cache[key] = (time.monotonic(), data)
+
+
+# ── Public API ────────────────────────────────────────────────────
+
+AIRLINE_NAMES = {
+    "delta": "DL", "united": "UA", "american": "AA",
+    "southwest": "WN", "jetblue": "B6", "spirit": "NK",
+    "frontier": "F9", "alaska": "AS", "hawaiian": "HA",
+    "lufthansa": "LH", "british airways": "BA", "air france": "AF",
+    "klm": "KL", "emirates": "EK", "turkish": "TK",
+    "ryanair": "FR", "easyjet": "U2", "aeroflot": "SU",
+    "singapore": "SQ", "cathay": "CX", "qantas": "QF",
+    "air canada": "AC", "westjet": "WS",
+}
 
 
 def parse_flight_number(text: str) -> Optional[str]:
-    """Extract a flight designator (e.g. 'DL404') from free-form text.
-
-    Accepts formats like 'DL 404', 'dl404', 'DL-404', 'Delta 404'.
-    Returns the normalised IATA code (uppercase, no spaces) or None.
-    """
-    AIRLINE_NAMES = {
-        "delta": "DL", "united": "UA", "american": "AA",
-        "southwest": "WN", "jetblue": "B6", "spirit": "NK",
-        "frontier": "F9", "alaska": "AS", "hawaiian": "HA",
-        "lufthansa": "LH", "british airways": "BA", "air france": "AF",
-        "klm": "KL", "emirates": "EK", "turkish": "TK",
-        "ryanair": "FR", "easyjet": "U2", "aeroflot": "SU",
-        "singapore": "SQ", "cathay": "CX", "qantas": "QF",
-        "air canada": "AC", "westjet": "WS",
-    }
-
+    """Extract a flight designator (e.g. 'DL404') from free-form text."""
     cleaned = text.strip().lower()
 
     for name, code in AIRLINE_NAMES.items():
@@ -50,166 +95,36 @@ def parse_flight_number(text: str) -> Optional[str]:
 
 
 async def fetch_flight(flight_iata: str) -> Optional[dict]:
-    """Return a normalised flight-data dict with a `legs` array, or None."""
-    if AVIATIONSTACK_KEY:
-        data = await _fetch_live(flight_iata)
+    """Return flight data — from cache, live provider, or demo fallback."""
+    key = flight_iata.upper()
+
+    cached = _cache_get(key)
+    if cached is not None:
+        log.debug("Cache hit for %s", key)
+        if not cached.get("demo"):
+            _refresh_timing(cached)
+        return cached
+
+    if _provider:
+        data = await _provider.fetch(key)
         if data:
+            log.info("Live data for %s (%d legs)", key, len(data.get("legs", [])))
+            _cache_set(key, data)
             return data
-    return _generate_demo(flight_iata)
+        log.warning("Provider returned no data for %s, falling back to demo", key)
+
+    demo = _generate_demo(key)
+    return demo
 
 
-STATUS_MAP = {
-    "scheduled": "Scheduled",
-    "active": "In Air",
-    "landed": "Landed",
-    "cancelled": "Cancelled",
-    "incident": "Incident",
-    "diverted": "Diverted",
-}
+def _refresh_timing(data: dict) -> None:
+    """Recompute progress_pct and remaining_min on cached data (they're time-dependent)."""
+    for leg in data.get("legs", []):
+        compute_leg_timing(leg)
+    data["status"] = overall_status(data.get("legs", []))
 
 
-def _local_iso_to_utc(iso: str, iata: str) -> Optional[datetime]:
-    """Convert an AviationStack 'fake UTC' timestamp to real UTC using airport timezone."""
-    if not iso:
-        return None
-    try:
-        naive = datetime.fromisoformat(iso.replace("+00:00", "").replace("Z", ""))
-        tz_name = (AIRPORTS.get(iata) or {}).get("tz")
-        if tz_name:
-            local_dt = naive.replace(tzinfo=ZoneInfo(tz_name))
-            return local_dt.astimezone(timezone.utc)
-        return naive.replace(tzinfo=timezone.utc)
-    except Exception:
-        return None
-
-
-def _compute_leg_timing(leg: dict) -> dict:
-    """Add duration_min and progress_pct to a leg dict."""
-    dep = leg["departure"]
-    arr = leg["arrival"]
-    dep_iso = dep.get("actual") or dep.get("estimated") or dep.get("scheduled")
-    arr_iso = arr.get("estimated") or arr.get("scheduled")
-
-    dep_utc = _local_iso_to_utc(dep_iso, dep.get("iata", ""))
-    arr_utc = _local_iso_to_utc(arr_iso, arr.get("iata", ""))
-
-    duration_min = None
-    progress_pct = 0
-
-    if dep_utc and arr_utc:
-        diff = (arr_utc - dep_utc).total_seconds()
-        if diff > 0:
-            duration_min = round(diff / 60)
-
-    remaining_min = None
-
-    if leg["status"] == "Landed":
-        progress_pct = 100
-    elif leg["status"] == "In Air" and dep_utc and arr_utc:
-        now = datetime.now(timezone.utc)
-        total = (arr_utc - dep_utc).total_seconds()
-        elapsed = (now - dep_utc).total_seconds()
-        if total > 0:
-            progress_pct = max(2, min(98, round(elapsed / total * 100)))
-            remaining_min = max(0, round((total - elapsed) / 60))
-
-    leg["duration_min"] = duration_min
-    leg["remaining_min"] = remaining_min
-    leg["progress_pct"] = progress_pct
-    return leg
-
-
-def _normalise_leg(f: dict) -> dict:
-    dep = f.get("departure") or {}
-    arr = f.get("arrival") or {}
-    status_raw = (f.get("flight_status") or "unknown").lower()
-    leg = {
-        "status": STATUS_MAP.get(status_raw, status_raw.title()),
-        "departure": {
-            "airport": dep.get("airport", ""),
-            "iata": dep.get("iata", ""),
-            "scheduled": dep.get("scheduled", ""),
-            "estimated": dep.get("estimated", ""),
-            "actual": dep.get("actual", ""),
-            "terminal": dep.get("terminal", ""),
-            "gate": dep.get("gate", ""),
-            "delay": dep.get("delay"),
-        },
-        "arrival": {
-            "airport": arr.get("airport", ""),
-            "iata": arr.get("iata", ""),
-            "scheduled": arr.get("scheduled", ""),
-            "estimated": arr.get("estimated", ""),
-            "actual": arr.get("actual", ""),
-            "terminal": arr.get("terminal", ""),
-            "gate": arr.get("gate", ""),
-            "delay": arr.get("delay"),
-        },
-        "live": bool(f.get("live")),
-    }
-    return _compute_leg_timing(leg)
-
-
-def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-async def _fetch_live(flight_iata: str) -> Optional[dict]:
-    params = {
-        "access_key": AVIATIONSTACK_KEY,
-        "flight_iata": flight_iata,
-    }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(AVIATIONSTACK_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return None
-                body = await resp.json()
-    except Exception:
-        return None
-
-    flights = body.get("data") or []
-    if not flights:
-        return None
-
-    today = _today_utc()
-    today_flights = [
-        f for f in flights
-        if (f.get("departure") or {}).get("scheduled", "").startswith(today)
-    ]
-    if not today_flights:
-        today_flights = flights
-
-    today_flights.sort(key=lambda f: (f.get("departure") or {}).get("scheduled", ""))
-
-    airline = (today_flights[0].get("airline") or {}).get("name", "")
-    legs = [_normalise_leg(f) for f in today_flights]
-
-    overall = _overall_status(legs)
-
-    return {
-        "flight": flight_iata.upper(),
-        "airline": airline,
-        "status": overall,
-        "legs": legs,
-        "demo": False,
-    }
-
-
-def _overall_status(legs: list[dict]) -> str:
-    statuses = [leg["status"] for leg in legs]
-    if any(s == "Cancelled" for s in statuses):
-        return "Cancelled"
-    if any(s == "Diverted" for s in statuses):
-        return "Diverted"
-    if any(s == "In Air" for s in statuses):
-        return "In Air"
-    if all(s == "Landed" for s in statuses):
-        return "Landed"
-    if all(s == "Scheduled" for s in statuses):
-        return "Scheduled"
-    return "En Route"
-
+# ── Demo data ─────────────────────────────────────────────────────
 
 DEMO_ROUTES: list[dict] = [
     {"dep": ("Los Angeles Intl", "LAX"), "arr": ("John F. Kennedy Intl", "JFK"), "duration_h": 5.2},
@@ -233,7 +148,6 @@ DEMO_AIRLINES = {
 
 
 def _generate_demo(flight_iata: str) -> dict:
-    """Produce realistic-looking fake flight data seeded by the flight number."""
     seed = sum(ord(c) for c in flight_iata)
     rng = random.Random(seed)
 
@@ -294,13 +208,12 @@ def _generate_demo(flight_iata: str) -> dict:
 
         cursor = arr_estimated + timedelta(minutes=rng.randint(45, 120))
 
-    legs = [_compute_leg_timing(leg) for leg in legs]
-    overall = _overall_status(legs)
+    legs = [compute_leg_timing(leg) for leg in legs]
 
     return {
         "flight": flight_iata.upper(),
         "airline": airline_name,
-        "status": overall,
+        "status": overall_status(legs),
         "legs": legs,
         "demo": True,
     }

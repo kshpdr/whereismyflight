@@ -117,11 +117,7 @@
       <div class="progress-track">
         <div class="track-line"></div>
         <div class="track-fill" data-leg="${index}"></div>
-        <div class="plane-icon" data-leg="${index}">
-          <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
-            <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 10-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
-          </svg>
-        </div>
+        <div class="plane-icon" data-leg="${index}">✈️</div>
       </div>
       <div class="time-row">
         <span class="time">${shortTime(depTime)}</span>
