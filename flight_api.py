@@ -64,6 +64,48 @@ def _cache_set(key: str, data: dict) -> None:
     _cache[key] = (time.monotonic(), data)
 
 
+# ── Rate limiting ─────────────────────────────────────────────────
+
+USER_RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_USER", "10"))   # per user per window
+USER_RATE_WINDOW = 60                                             # 1 minute
+GLOBAL_DAILY_LIMIT = int(os.getenv("RATE_LIMIT_DAILY", "500"))   # total API calls/day
+
+_user_hits: dict[int, list[float]] = {}  # user_id → list of timestamps
+_global_counter: list[float] = []        # timestamps of all API calls
+
+
+def _check_rate_limit(user_id: Optional[int]) -> Optional[str]:
+    """Return an error message if rate-limited, or None if OK."""
+    now = time.monotonic()
+
+    # global daily limit
+    cutoff_day = now - 86400
+    _global_counter[:] = [t for t in _global_counter if t > cutoff_day]
+    if len(_global_counter) >= GLOBAL_DAILY_LIMIT:
+        log.warning("Global daily rate limit reached (%d)", GLOBAL_DAILY_LIMIT)
+        return "The bot is temporarily at capacity. Please try again later."
+
+    # per-user limit
+    if user_id is not None:
+        cutoff = now - USER_RATE_WINDOW
+        hits = _user_hits.get(user_id, [])
+        hits = [t for t in hits if t > cutoff]
+        _user_hits[user_id] = hits
+        if len(hits) >= USER_RATE_LIMIT:
+            log.warning("User %d rate-limited (%d/%d in %ds)", user_id, len(hits), USER_RATE_LIMIT, USER_RATE_WINDOW)
+            return f"Too many requests — please wait a minute before trying again."
+
+    return None
+
+
+def _record_api_call(user_id: Optional[int]) -> None:
+    """Record that an API call was made (only called on actual provider hits)."""
+    now = time.monotonic()
+    _global_counter.append(now)
+    if user_id is not None:
+        _user_hits.setdefault(user_id, []).append(now)
+
+
 # ── Public API ────────────────────────────────────────────────────
 
 AIRLINE_NAMES = {
@@ -94,10 +136,21 @@ def parse_flight_number(text: str) -> Optional[str]:
     return None
 
 
-async def fetch_flight(flight_iata: str) -> Optional[dict]:
-    """Return flight data — from cache, live provider, or demo fallback."""
+class RateLimitError(Exception):
+    """Raised when a user or global rate limit is exceeded."""
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+
+async def fetch_flight(flight_iata: str, user_id: Optional[int] = None) -> Optional[dict]:
+    """Return flight data — from cache, live provider, or demo fallback.
+
+    Raises RateLimitError if the user or global limit is exceeded.
+    """
     key = flight_iata.upper()
 
+    # cache hits are free — no rate limit check needed
     cached = _cache_get(key)
     if cached is not None:
         log.debug("Cache hit for %s", key)
@@ -105,9 +158,15 @@ async def fetch_flight(flight_iata: str) -> Optional[dict]:
             _refresh_timing(cached)
         return cached
 
+    # rate limit only applies to actual API calls
     if _provider:
+        err = _check_rate_limit(user_id)
+        if err:
+            raise RateLimitError(err)
+
         data = await _provider.fetch(key)
         if data:
+            _record_api_call(user_id)
             log.info("Live data for %s (%d legs)", key, len(data.get("legs", [])))
             _cache_set(key, data)
             return data

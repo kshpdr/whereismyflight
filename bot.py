@@ -12,7 +12,7 @@ from telegram import (
 )
 from telegram.ext import Application, CommandHandler, InlineQueryHandler, MessageHandler, filters, ContextTypes
 
-from flight_api import parse_flight_number, fetch_flight
+from flight_api import parse_flight_number, fetch_flight, RateLimitError
 
 WEBAPP_BASE_URL: str = os.getenv("WEBAPP_BASE_URL", "")
 MINIAPP_DIRECT_LINK: str = os.getenv("MINIAPP_DIRECT_LINK", "https://t.me/whereismyflightbot/whereismyflight")
@@ -40,7 +40,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    data = await fetch_flight(flight_code)
+    user_id = update.effective_user.id if update.effective_user else None
+    try:
+        data = await fetch_flight(flight_code, user_id=user_id)
+    except RateLimitError as e:
+        await update.message.reply_text(f"⏳ {e.message}", parse_mode="Markdown")
+        return
+
     if not data:
         await update.message.reply_text(f"Sorry, I couldn't find any data for *{flight_code}*.", parse_mode="Markdown")
         return
@@ -113,7 +119,12 @@ async def handle_inline(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not flight_code:
         return
 
-    data = await fetch_flight(flight_code)
+    user_id = update.effective_user.id if update.effective_user else None
+    try:
+        data = await fetch_flight(flight_code, user_id=user_id)
+    except RateLimitError:
+        return
+
     if not data:
         await update.inline_query.answer([
             InlineQueryResultArticle(

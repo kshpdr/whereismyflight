@@ -12,7 +12,9 @@ import pytest
 
 from flight_api import (
     _cache, _cache_get, _cache_set, _generate_demo,
-    fetch_flight, parse_flight_number,
+    _global_counter, _user_hits, _check_rate_limit, _record_api_call,
+    fetch_flight, parse_flight_number, RateLimitError,
+    USER_RATE_LIMIT, USER_RATE_WINDOW,
 )
 from providers import (
     AviationStackProvider, FlightAwareProvider, FlightProvider,
@@ -178,6 +180,8 @@ class TestCache:
 class TestFetchFlight:
     def setup_method(self):
         _cache.clear()
+        _global_counter.clear()
+        _user_hits.clear()
 
     @pytest.mark.asyncio
     async def test_demo_fallback_when_no_provider(self):
@@ -213,6 +217,64 @@ class TestFetchFlight:
             data = await fetch_flight("XX999")
             assert data is not None
             assert data["demo"] is True
+
+
+# ── Rate limiting ─────────────────────────────────────────────────
+
+class TestRateLimiting:
+    def setup_method(self):
+        _cache.clear()
+        _global_counter.clear()
+        _user_hits.clear()
+
+    def test_user_under_limit_passes(self):
+        assert _check_rate_limit(user_id=123) is None
+
+    def test_user_over_limit_blocked(self):
+        now = time.monotonic()
+        _user_hits[123] = [now] * USER_RATE_LIMIT
+        msg = _check_rate_limit(user_id=123)
+        assert msg is not None
+        assert "wait" in msg.lower()
+
+    def test_global_limit_blocks(self):
+        now = time.monotonic()
+        _global_counter.extend([now] * 500)
+        msg = _check_rate_limit(user_id=999)
+        assert msg is not None
+        assert "capacity" in msg.lower()
+
+    def test_cache_hit_bypasses_rate_limit(self):
+        _cache_set("DL404", {"flight": "DL404", "status": "In Air", "legs": [], "demo": False})
+        now = time.monotonic()
+        _user_hits[123] = [now] * USER_RATE_LIMIT
+
+        # should NOT raise even though user is over limit — it's a cache hit
+        data = asyncio.get_event_loop().run_until_complete(fetch_flight("DL404", user_id=123))
+        assert data is not None
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_raises_error(self):
+        mock_provider = AsyncMock(spec=FlightProvider)
+        now = time.monotonic()
+        _user_hits[123] = [now] * USER_RATE_LIMIT
+
+        with patch("flight_api._provider", mock_provider):
+            with pytest.raises(RateLimitError):
+                await fetch_flight("NEW123", user_id=123)
+
+        mock_provider.fetch.assert_not_called()
+
+    def test_record_api_call(self):
+        _record_api_call(user_id=42)
+        assert len(_global_counter) == 1
+        assert len(_user_hits[42]) == 1
+
+    def test_no_user_id_still_checks_global(self):
+        now = time.monotonic()
+        _global_counter.extend([now] * 500)
+        msg = _check_rate_limit(user_id=None)
+        assert msg is not None
 
 
 # ── Demo data ─────────────────────────────────────────────────────
