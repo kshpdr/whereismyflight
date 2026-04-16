@@ -49,7 +49,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
     webapp_url = f"{WEBAPP_BASE_URL}/webapp/index.html?flight={flight_code}"
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📱 Live View", web_app={"url": webapp_url})]
+        [InlineKeyboardButton("✈️ Live View", web_app={"url": webapp_url})]
     ])
 
     await update.message.reply_text(summary, parse_mode="Markdown", reply_markup=keyboard)
@@ -158,7 +158,7 @@ async def handle_inline(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 parse_mode="Markdown",
             ),
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📱 Live View", url=miniapp_url)]
+                [InlineKeyboardButton("✈️ Live View", url=miniapp_url)]
             ]),
         )
     ]

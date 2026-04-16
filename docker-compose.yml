@@ -1,5 +1,6 @@
 services:
   bot:
+    image: ghcr.io/kshpdr/whereismyflight:latest
     build: .
     restart: unless-stopped
     ports:
