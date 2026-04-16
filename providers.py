@@ -16,6 +16,17 @@ import airportsdata
 log = logging.getLogger(__name__)
 AIRPORTS = airportsdata.load("IATA")
 
+AIRLINE_NAMES = {
+    "DL": "Delta Air Lines", "UA": "United Airlines", "AA": "American Airlines",
+    "WN": "Southwest Airlines", "B6": "JetBlue Airways", "NK": "Spirit Airlines",
+    "F9": "Frontier Airlines", "AS": "Alaska Airlines", "HA": "Hawaiian Airlines",
+    "LH": "Lufthansa", "BA": "British Airways", "AF": "Air France",
+    "KL": "KLM", "EK": "Emirates", "TK": "Turkish Airlines",
+    "FR": "Ryanair", "U2": "easyJet", "SU": "Aeroflot",
+    "SQ": "Singapore Airlines", "CX": "Cathay Pacific", "QF": "Qantas",
+    "AC": "Air Canada", "WS": "WestJet", "OO": "SkyWest Airlines",
+}
+
 IATA_TO_ICAO = {
     "DL": "DAL", "UA": "UAL", "AA": "AAL", "WN": "SWA",
     "B6": "JBU", "NK": "NKS", "F9": "FFT", "AS": "ASA",
@@ -131,6 +142,38 @@ def compute_leg_timing(leg: dict) -> dict:
     return leg
 
 
+def _pick_best_flight(legs: list[dict]) -> list[dict]:
+    """From a list of normalised legs, determine if they form a connecting
+    itinerary or are duplicate instances of the same route.
+
+    Connecting chain: leg1.arrival.iata == leg2.departure.iata (e.g. SFO→DAL, DAL→ATL)
+    Duplicates: all legs share the same origin→destination (e.g. SFO→PHX x3)
+
+    For duplicates, pick the single most relevant flight:
+      In Air > Landed (most recent) > Scheduled (soonest)
+    """
+    if len(legs) <= 1:
+        return legs
+
+    routes = [(l["departure"]["iata"], l["arrival"]["iata"]) for l in legs]
+    all_same_route = len(set(routes)) == 1
+
+    if not all_same_route:
+        is_chain = all(
+            legs[i]["arrival"]["iata"] == legs[i + 1]["departure"]["iata"]
+            for i in range(len(legs) - 1)
+        )
+        if is_chain:
+            return legs
+
+    STATUS_PRIORITY = {"In Air": 0, "Landed": 1, "Scheduled": 2}
+    legs.sort(key=lambda l: (
+        STATUS_PRIORITY.get(l["status"], 9),
+        -(l.get("progress_pct") or 0),
+    ))
+    return [legs[0]]
+
+
 # ── Abstract provider ─────────────────────────────────────────────
 
 class FlightProvider(ABC):
@@ -181,6 +224,7 @@ class AviationStackProvider(FlightProvider):
 
         airline = (today_flights[0].get("airline") or {}).get("name", "")
         legs = [self._normalise_leg(f) for f in today_flights]
+        legs = _pick_best_flight(legs)
 
         return {
             "flight": flight_iata.upper(),
@@ -277,8 +321,12 @@ class FlightAwareProvider(FlightProvider):
         today_flights.sort(key=lambda f: f.get("scheduled_out") or f.get("scheduled_off") or "")
 
         first = today_flights[0]
-        airline = first.get("operator_iata") or first.get("operator") or ""
+        iata_code = re.match(r"([A-Z]{2})", flight_iata.upper())
+        marketing_code = iata_code.group(1) if iata_code else ""
+        operator_code = first.get("operator_iata") or first.get("operator") or ""
+        airline = AIRLINE_NAMES.get(marketing_code) or AIRLINE_NAMES.get(operator_code) or operator_code
         legs = [self._normalise_leg(f) for f in today_flights]
+        legs = _pick_best_flight(legs)
 
         return {
             "flight": flight_iata.upper(),

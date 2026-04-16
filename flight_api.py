@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from providers import (
+    AIRLINE_NAMES as PROVIDER_AIRLINE_NAMES,
     AviationStackProvider, FlightAwareProvider, FlightProvider,
     compute_leg_timing, overall_status,
 )
@@ -196,14 +197,7 @@ DEMO_ROUTES: list[dict] = [
     {"dep": ("New York Newark", "EWR"), "arr": ("San Francisco Intl", "SFO"), "duration_h": 5.8},
 ]
 
-DEMO_AIRLINES = {
-    "DL": "Delta Air Lines", "UA": "United Airlines", "AA": "American Airlines",
-    "WN": "Southwest Airlines", "B6": "JetBlue Airways", "NK": "Spirit Airlines",
-    "F9": "Frontier Airlines", "AS": "Alaska Airlines", "LH": "Lufthansa",
-    "BA": "British Airways", "AF": "Air France", "EK": "Emirates",
-    "TK": "Turkish Airlines", "SQ": "Singapore Airlines", "QF": "Qantas",
-    "AC": "Air Canada",
-}
+DEMO_AIRLINES = PROVIDER_AIRLINE_NAMES
 
 
 def _generate_demo(flight_iata: str) -> dict:

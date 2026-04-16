@@ -19,7 +19,7 @@ from flight_api import (
 from providers import (
     AviationStackProvider, FlightAwareProvider, FlightProvider,
     compute_leg_timing, local_iso_to_utc, overall_status,
-    _parse_utc, _utc_to_local_iso,
+    _parse_utc, _utc_to_local_iso, _pick_best_flight,
 )
 
 
@@ -321,6 +321,55 @@ SAMPLE_FA_FLIGHT = {
     "filed_ete": 19800,
     "baggage_claim": None,
 }
+
+
+class TestPickBestFlight:
+    def _leg(self, dep_iata, arr_iata, status="Scheduled", progress_pct=0):
+        return {
+            "departure": {"iata": dep_iata, "airport": "", "scheduled": "", "estimated": "", "actual": "", "terminal": "", "gate": "", "delay": None},
+            "arrival": {"iata": arr_iata, "airport": "", "scheduled": "", "estimated": "", "actual": "", "terminal": "", "gate": "", "delay": None},
+            "status": status, "live": False, "duration_min": 120, "progress_pct": progress_pct, "remaining_min": None,
+        }
+
+    def test_single_leg_unchanged(self):
+        legs = [self._leg("SFO", "PHX")]
+        assert len(_pick_best_flight(legs)) == 1
+
+    def test_connecting_chain_preserved(self):
+        legs = [self._leg("SFO", "DAL"), self._leg("DAL", "ATL")]
+        result = _pick_best_flight(legs)
+        assert len(result) == 2
+        assert result[0]["departure"]["iata"] == "SFO"
+        assert result[1]["departure"]["iata"] == "DAL"
+
+    def test_duplicate_routes_picks_one(self):
+        legs = [
+            self._leg("SFO", "PHX", "Landed", 100),
+            self._leg("SFO", "PHX", "Landed", 100),
+            self._leg("SFO", "PHX", "Landed", 100),
+        ]
+        result = _pick_best_flight(legs)
+        assert len(result) == 1
+
+    def test_duplicate_routes_prefers_in_air(self):
+        legs = [
+            self._leg("SFO", "PHX", "Scheduled", 0),
+            self._leg("SFO", "PHX", "In Air", 45),
+            self._leg("SFO", "PHX", "Landed", 100),
+        ]
+        result = _pick_best_flight(legs)
+        assert len(result) == 1
+        assert result[0]["status"] == "In Air"
+
+    def test_non_chain_different_routes_picks_one(self):
+        legs = [self._leg("SFO", "PHX"), self._leg("JFK", "LAX")]
+        result = _pick_best_flight(legs)
+        assert len(result) == 1
+
+    def test_three_leg_chain_preserved(self):
+        legs = [self._leg("SFO", "DAL"), self._leg("DAL", "ATL"), self._leg("ATL", "MIA")]
+        result = _pick_best_flight(legs)
+        assert len(result) == 3
 
 
 class TestFlightAwareNormaliseLeg:
