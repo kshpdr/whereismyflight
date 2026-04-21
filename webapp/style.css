@@ -324,6 +324,14 @@ body {
   opacity: .6;
 }
 
+/* ── Timezone labels ──────────────────────────────────────────────── */
+.tz-label {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-dim);
+  opacity: .7;
+}
+
 /* ── Date navigation ─────────────────────────────────────────────── */
 .date-nav {
   display: flex;

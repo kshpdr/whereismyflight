@@ -107,6 +107,17 @@ def _utc_to_local_iso(utc_dt: datetime | None, tz_name: str | None) -> str:
     return utc_dt.strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
+def _tz_abbrev(utc_dt: datetime | None, tz_name: str | None) -> str:
+    """Get the timezone abbreviation (e.g. 'PDT', 'CDT') for display."""
+    if not utc_dt or not tz_name:
+        return ""
+    try:
+        local = utc_dt.astimezone(ZoneInfo(tz_name))
+        return local.strftime("%Z")
+    except Exception:
+        return ""
+
+
 def compute_leg_timing(leg: dict) -> dict:
     """Add duration_min, remaining_min, and progress_pct to a leg."""
     dep = leg["departure"]
@@ -295,6 +306,12 @@ class AviationStackProvider(FlightProvider):
         dep = f.get("departure") or {}
         arr = f.get("arrival") or {}
         status_raw = (f.get("flight_status") or "unknown").lower()
+
+        dep_tz = (AIRPORTS.get(dep.get("iata", "")) or {}).get("tz")
+        arr_tz = (AIRPORTS.get(arr.get("iata", "")) or {}).get("tz")
+        dep_ref = local_iso_to_utc(dep.get("actual") or dep.get("estimated") or dep.get("scheduled", ""), dep.get("iata", ""))
+        arr_ref = local_iso_to_utc(arr.get("actual") or arr.get("estimated") or arr.get("scheduled", ""), arr.get("iata", ""))
+
         leg = {
             "status": STATUS_MAP.get(status_raw, status_raw.title()),
             "departure": {
@@ -306,6 +323,7 @@ class AviationStackProvider(FlightProvider):
                 "terminal": dep.get("terminal", ""),
                 "gate": dep.get("gate", ""),
                 "delay": dep.get("delay"),
+                "tz": _tz_abbrev(dep_ref, dep_tz),
             },
             "arrival": {
                 "airport": arr.get("airport", ""),
@@ -316,6 +334,7 @@ class AviationStackProvider(FlightProvider):
                 "terminal": arr.get("terminal", ""),
                 "gate": arr.get("gate", ""),
                 "delay": arr.get("delay"),
+                "tz": _tz_abbrev(arr_ref, arr_tz),
             },
             "live": bool(f.get("live")),
         }
@@ -465,6 +484,9 @@ class FlightAwareProvider(FlightProvider):
                     if api_progress is None:
                         progress_pct = max(2, min(98, round(elapsed / total * 100)))
 
+        dep_ref = dep_act_utc or dep_est_utc or dep_sched_utc
+        arr_ref = arr_act_utc or arr_est_utc or arr_sched_utc
+
         leg = {
             "status": status,
             "departure": {
@@ -476,6 +498,7 @@ class FlightAwareProvider(FlightProvider):
                 "terminal": f.get("terminal_origin") or "",
                 "gate": f.get("gate_origin") or "",
                 "delay": dep_delay_min,
+                "tz": _tz_abbrev(dep_ref, origin_tz),
             },
             "arrival": {
                 "airport": dest.get("name") or "",
@@ -486,6 +509,7 @@ class FlightAwareProvider(FlightProvider):
                 "terminal": f.get("terminal_destination") or "",
                 "gate": f.get("gate_destination") or "",
                 "delay": arr_delay_min,
+                "tz": _tz_abbrev(arr_ref, dest_tz),
             },
             "live": status == "In Air",
             "duration_min": duration_min,

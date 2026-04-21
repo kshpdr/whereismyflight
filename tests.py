@@ -20,6 +20,8 @@ from providers import (
     AviationStackProvider, FlightAwareProvider, FlightProvider,
     compute_leg_timing, local_iso_to_utc, overall_status,
     _parse_utc, _utc_to_local_iso, _pick_best_flight,
+    _group_flights_by_day, _select_best_day, _available_dates,
+    _tz_abbrev,
 )
 
 
@@ -321,6 +323,104 @@ SAMPLE_FA_FLIGHT = {
     "filed_ete": 19800,
     "baggage_claim": None,
 }
+
+
+class TestDateSelection:
+    """Tests for _group_flights_by_day, _select_best_day, _available_dates."""
+
+    def test_group_by_day(self):
+        flights = [
+            {"scheduled_out": "2026-04-20T10:00:00Z"},
+            {"scheduled_out": "2026-04-20T22:00:00Z"},
+            {"scheduled_out": "2026-04-21T08:00:00Z"},
+        ]
+        groups = _group_flights_by_day(flights, "scheduled_out")
+        assert len(groups) == 2
+        assert len(groups["2026-04-20"]) == 2
+        assert len(groups["2026-04-21"]) == 1
+
+    def test_group_missing_key(self):
+        flights = [{"other": "value"}]
+        groups = _group_flights_by_day(flights, "scheduled_out")
+        assert "unknown" in groups
+
+    def test_select_prefers_in_air(self):
+        groups = {
+            "2026-04-20": [{"s": "Landed"}],
+            "2026-04-21": [{"s": "In Air"}],
+            "2026-04-22": [{"s": "Scheduled"}],
+        }
+        date, flights = _select_best_day(groups, lambda f: f["s"])
+        assert date == "2026-04-21"
+        assert flights[0]["s"] == "In Air"
+
+    def test_select_falls_back_to_upcoming(self):
+        groups = {
+            "2026-04-19": [{"s": "Landed"}],
+            "2099-12-01": [{"s": "Scheduled"}],
+        }
+        date, flights = _select_best_day(groups, lambda f: f["s"])
+        assert date == "2099-12-01"
+
+    def test_select_falls_back_to_most_recent(self):
+        groups = {
+            "2020-01-01": [{"s": "Landed"}],
+            "2020-06-15": [{"s": "Landed"}],
+        }
+        date, flights = _select_best_day(groups, lambda f: f["s"])
+        assert date == "2020-06-15"
+
+    def test_available_dates_sorted(self):
+        groups = {"2026-04-22": [], "2026-04-20": [], "2026-04-21": [], "unknown": []}
+        dates = _available_dates(groups)
+        assert dates == ["2026-04-20", "2026-04-21", "2026-04-22"]
+
+    def test_available_dates_excludes_unknown(self):
+        groups = {"unknown": []}
+        assert _available_dates(groups) == []
+
+
+class TestTzAbbrev:
+    def test_sfo_in_april(self):
+        utc = datetime(2026, 4, 15, 20, 0, tzinfo=timezone.utc)
+        assert _tz_abbrev(utc, "America/Los_Angeles") == "PDT"
+
+    def test_sfo_in_december(self):
+        utc = datetime(2026, 12, 15, 20, 0, tzinfo=timezone.utc)
+        assert _tz_abbrev(utc, "America/Los_Angeles") == "PST"
+
+    def test_chicago(self):
+        utc = datetime(2026, 4, 15, 20, 0, tzinfo=timezone.utc)
+        assert _tz_abbrev(utc, "America/Chicago") == "CDT"
+
+    def test_none_inputs(self):
+        assert _tz_abbrev(None, "America/New_York") == ""
+        assert _tz_abbrev(datetime.now(timezone.utc), None) == ""
+
+
+class TestProviderOutputSchema:
+    """Verify both providers return the same standardised shape."""
+
+    REQUIRED_TOP_KEYS = {"flight", "airline", "status", "legs", "date", "available_dates", "demo"}
+    REQUIRED_LEG_KEYS = {"status", "departure", "arrival", "live", "duration_min", "progress_pct", "remaining_min"}
+    REQUIRED_ENDPOINT_KEYS = {"airport", "iata", "scheduled", "estimated", "actual", "terminal", "gate", "delay", "tz"}
+
+    def test_flightaware_leg_schema(self):
+        leg = FlightAwareProvider._normalise_leg(SAMPLE_FA_FLIGHT)
+        assert self.REQUIRED_LEG_KEYS.issubset(leg.keys()), f"Missing: {self.REQUIRED_LEG_KEYS - leg.keys()}"
+        assert self.REQUIRED_ENDPOINT_KEYS.issubset(leg["departure"].keys()), f"Dep missing: {self.REQUIRED_ENDPOINT_KEYS - leg['departure'].keys()}"
+        assert self.REQUIRED_ENDPOINT_KEYS.issubset(leg["arrival"].keys()), f"Arr missing: {self.REQUIRED_ENDPOINT_KEYS - leg['arrival'].keys()}"
+
+    def test_flightaware_tz_populated(self):
+        leg = FlightAwareProvider._normalise_leg(SAMPLE_FA_FLIGHT)
+        assert leg["departure"]["tz"] == "PDT"
+        assert leg["arrival"]["tz"] == "CDT"
+
+    def test_demo_data_has_schema(self):
+        data = _generate_demo("DL404")
+        assert self.REQUIRED_TOP_KEYS - {"date", "available_dates"} <= data.keys()
+        for leg in data["legs"]:
+            assert self.REQUIRED_LEG_KEYS.issubset(leg.keys())
 
 
 class TestPickBestFlight:

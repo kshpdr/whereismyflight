@@ -161,9 +161,9 @@
         <div class="plane-icon" data-leg="${index}">✈️</div>
       </div>
       <div class="time-row">
-        <span class="time">${shortTime(depTime)}</span>
+        <span class="time">${shortTime(depTime)}${dep.tz ? `<span class="tz-label"> ${esc(dep.tz)}</span>` : ""}</span>
         <span class="duration">${formatMinutes(leg.duration_min)}</span>
-        <span class="time">${shortTime(arrTime)}</span>
+        <span class="time">${shortTime(arrTime)}${arr.tz ? `<span class="tz-label"> ${esc(arr.tz)}</span>` : ""}</span>
       </div>
       ${leg.status === "In Air" && leg.remaining_min != null ? `<div class="remaining-label">${formatMinutes(leg.remaining_min)} remaining</div>` : ""}
     `;
