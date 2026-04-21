@@ -8,7 +8,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from flight_api import fetch_flight, parse_flight_number
+from flight_api import fetch_flight, parse_flight_number, RateLimitError
 
 WEBAPP_DIR = Path(__file__).parent / "webapp"
 LANDING_HTML = WEBAPP_DIR / "landing.html"
@@ -24,7 +24,13 @@ async def handle_flight_api(request: web.Request) -> web.Response:
     if not flight_code:
         return web.json_response({"error": "invalid flight number"}, status=400)
 
-    data = await fetch_flight(flight_code)
+    date = request.query.get("date")
+
+    try:
+        data = await fetch_flight(flight_code, date=date)
+    except RateLimitError as e:
+        return web.json_response({"error": e.message}, status=429)
+
     if data is None:
         return web.json_response({"error": "flight not found"}, status=404)
 

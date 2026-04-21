@@ -174,12 +174,59 @@ def _pick_best_flight(legs: list[dict]) -> list[dict]:
     return [legs[0]]
 
 
+def _group_flights_by_day(flights: list[dict], dep_time_key: str) -> dict[str, list[dict]]:
+    """Group raw API flights by departure date (UTC date string)."""
+    groups: dict[str, list[dict]] = {}
+    for f in flights:
+        dep = f.get(dep_time_key) or ""
+        date = dep[:10] if len(dep) >= 10 else "unknown"
+        groups.setdefault(date, []).append(f)
+    return groups
+
+
+def _select_best_day(day_groups: dict[str, list[dict]], status_extractor) -> tuple[str, list[dict]]:
+    """Pick the most relevant day's flights.
+
+    Priority:
+      1. Any day with an in-air flight
+      2. Closest upcoming scheduled flight
+      3. Most recently landed flight
+    """
+    now = datetime.now(timezone.utc)
+    today_str = now.strftime("%Y-%m-%d")
+
+    for date, flights in sorted(day_groups.items()):
+        if any(status_extractor(f) == "In Air" for f in flights):
+            return date, flights
+
+    future_days = {d: fs for d, fs in day_groups.items() if d >= today_str}
+    if future_days:
+        closest = min(future_days.keys())
+        return closest, future_days[closest]
+
+    past_days = {d: fs for d, fs in day_groups.items() if d < today_str}
+    if past_days:
+        latest = max(past_days.keys())
+        return latest, past_days[latest]
+
+    first_key = next(iter(day_groups))
+    return first_key, day_groups[first_key]
+
+
+def _available_dates(day_groups: dict[str, list[dict]]) -> list[str]:
+    """Return sorted list of available dates."""
+    return sorted(d for d in day_groups if d != "unknown")
+
+
 # ── Abstract provider ─────────────────────────────────────────────
 
 class FlightProvider(ABC):
     @abstractmethod
-    async def fetch(self, flight_iata: str) -> Optional[dict]:
-        """Return normalised flight dict with `legs` array, or None."""
+    async def fetch(self, flight_iata: str, date: Optional[str] = None) -> Optional[dict]:
+        """Return normalised flight dict with `legs` array, or None.
+
+        If date is provided (YYYY-MM-DD), select that specific day's flight.
+        """
         ...
 
 
@@ -191,7 +238,7 @@ class AviationStackProvider(FlightProvider):
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    async def fetch(self, flight_iata: str) -> Optional[dict]:
+    async def fetch(self, flight_iata: str, date: Optional[str] = None) -> Optional[dict]:
         params = {"access_key": self.api_key, "flight_iata": flight_iata}
         try:
             async with aiohttp.ClientSession() as session:
@@ -212,25 +259,34 @@ class AviationStackProvider(FlightProvider):
         if not flights:
             return None
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        today_flights = [
-            f for f in flights
-            if (f.get("departure") or {}).get("scheduled", "").startswith(today)
-        ]
-        if not today_flights:
-            today_flights = flights
+        day_groups: dict[str, list[dict]] = {}
+        for f in flights:
+            dep = (f.get("departure") or {}).get("scheduled", "")
+            d = dep[:10] if len(dep) >= 10 else "unknown"
+            day_groups.setdefault(d, []).append(f)
 
-        today_flights.sort(key=lambda f: (f.get("departure") or {}).get("scheduled", ""))
+        def as_status(f):
+            raw = (f.get("flight_status") or "unknown").lower()
+            return STATUS_MAP.get(raw, raw.title())
 
-        airline = (today_flights[0].get("airline") or {}).get("name", "")
-        legs = [self._normalise_leg(f) for f in today_flights]
+        if date and date in day_groups:
+            selected_date, selected_flights = date, day_groups[date]
+        else:
+            selected_date, selected_flights = _select_best_day(day_groups, as_status)
+        selected_flights.sort(key=lambda f: (f.get("departure") or {}).get("scheduled", ""))
+
+        airline = (selected_flights[0].get("airline") or {}).get("name", "")
+        legs = [self._normalise_leg(f) for f in selected_flights]
         legs = _pick_best_flight(legs)
+        dates = _available_dates(day_groups)
 
         return {
             "flight": flight_iata.upper(),
             "airline": airline,
             "status": overall_status(legs),
             "legs": legs,
+            "date": selected_date,
+            "available_dates": dates,
             "demo": False,
         }
 
@@ -284,7 +340,7 @@ class FlightAwareProvider(FlightProvider):
                 return f"{icao}{number}"
         return flight_iata
 
-    async def fetch(self, flight_iata: str) -> Optional[dict]:
+    async def fetch(self, flight_iata: str, date: Optional[str] = None) -> Optional[dict]:
         ident = self._to_icao_ident(flight_iata)
         headers = {"x-apikey": self.api_key}
 
@@ -310,29 +366,34 @@ class FlightAwareProvider(FlightProvider):
         if not flights:
             return None
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        today_flights = [
-            f for f in flights
-            if (f.get("scheduled_out") or f.get("scheduled_off") or "").startswith(today)
-        ]
-        if not today_flights:
-            today_flights = flights[:3]
+        dep_key = "scheduled_out"
+        day_groups = _group_flights_by_day(flights, dep_key)
 
-        today_flights.sort(key=lambda f: f.get("scheduled_out") or f.get("scheduled_off") or "")
+        def fa_status(f):
+            return FlightAwareProvider._derive_status(f)
 
-        first = today_flights[0]
+        if date and date in day_groups:
+            selected_date, selected_flights = date, day_groups[date]
+        else:
+            selected_date, selected_flights = _select_best_day(day_groups, fa_status)
+        selected_flights.sort(key=lambda f: f.get("scheduled_out") or f.get("scheduled_off") or "")
+
+        first = selected_flights[0]
         iata_code = re.match(r"([A-Z]{2})", flight_iata.upper())
         marketing_code = iata_code.group(1) if iata_code else ""
         operator_code = first.get("operator_iata") or first.get("operator") or ""
         airline = AIRLINE_NAMES.get(marketing_code) or AIRLINE_NAMES.get(operator_code) or operator_code
-        legs = [self._normalise_leg(f) for f in today_flights]
+        legs = [self._normalise_leg(f) for f in selected_flights]
         legs = _pick_best_flight(legs)
+        dates = _available_dates(day_groups)
 
         return {
             "flight": flight_iata.upper(),
             "airline": airline,
             "status": overall_status(legs),
             "legs": legs,
+            "date": selected_date,
+            "available_dates": dates,
             "demo": False,
         }
 

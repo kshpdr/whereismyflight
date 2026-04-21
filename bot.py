@@ -74,8 +74,13 @@ def _format_summary(d: dict) -> str:
         "En Route": "✈️",
     }.get(status, "ℹ️")
 
+    date = d.get("date", "")
+    date_label = ""
+    if date and date != "unknown":
+        date_label = f" ({date})"
+
     lines = [
-        f"{status_emoji}  *{d['flight']}* — {d['airline']}",
+        f"{status_emoji}  *{d['flight']}* — {d['airline']}{date_label}",
         f"Status: *{status}*",
     ]
 

@@ -14,12 +14,15 @@
   const API_BASE = window.location.origin;
   const REFRESH_MS = 60_000;
 
+  let currentDate = null;
+  let availableDates = [];
+
   const flight = getFlightParam();
   if (!flight) {
     showError("No flight number provided.");
   } else {
     loadFlight(flight);
-    setInterval(() => loadFlight(flight), REFRESH_MS);
+    setInterval(() => loadFlight(flight, currentDate), REFRESH_MS);
   }
 
   // ── Data ────────────────────────────────────────────────────────
@@ -33,11 +36,15 @@
     return (fromUrl || fromTg).trim().toUpperCase() || null;
   }
 
-  async function loadFlight(code) {
+  async function loadFlight(code, date) {
     try {
-      const resp = await fetch(`${API_BASE}/api/flight/${encodeURIComponent(code)}`);
+      let url = `${API_BASE}/api/flight/${encodeURIComponent(code)}`;
+      if (date) url += `?date=${date}`;
+      const resp = await fetch(url);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
+      currentDate = data.date || null;
+      availableDates = data.available_dates || [];
       render(data);
     } catch (err) {
       console.error("Failed to load flight:", err);
@@ -61,6 +68,8 @@
       $("#demo-tag").classList.remove("visible");
     }
 
+    renderDateNav(d.date, d.available_dates || []);
+
     const container = $("#legs-container");
     container.innerHTML = "";
 
@@ -72,6 +81,38 @@
 
     legs.forEach((leg, i) => {
       container.appendChild(buildLegCard(leg, i, legs.length));
+    });
+  }
+
+  function renderDateNav(selectedDate, dates) {
+    let nav = $("#date-nav");
+    if (!nav) {
+      nav = document.createElement("div");
+      nav.id = "date-nav";
+      nav.className = "date-nav";
+      const header = $(".flight-header");
+      if (header) header.after(nav);
+    }
+
+    if (!dates || dates.length <= 1) {
+      nav.style.display = "none";
+      return;
+    }
+
+    nav.style.display = "flex";
+    nav.innerHTML = "";
+
+    dates.forEach((d) => {
+      const btn = document.createElement("button");
+      btn.className = "date-btn" + (d === selectedDate ? " active" : "");
+      const dt = new Date(d + "T12:00:00Z");
+      const label = dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      btn.textContent = label;
+      btn.onclick = () => {
+        currentDate = d;
+        loadFlight(flight, d);
+      };
+      nav.appendChild(btn);
     });
   }
 

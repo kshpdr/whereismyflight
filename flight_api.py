@@ -144,17 +144,19 @@ class RateLimitError(Exception):
         super().__init__(message)
 
 
-async def fetch_flight(flight_iata: str, user_id: Optional[int] = None) -> Optional[dict]:
+async def fetch_flight(flight_iata: str, user_id: Optional[int] = None, date: Optional[str] = None) -> Optional[dict]:
     """Return flight data — from cache, live provider, or demo fallback.
 
+    If date is provided (YYYY-MM-DD), fetch that specific day's flight.
     Raises RateLimitError if the user or global limit is exceeded.
     """
     key = flight_iata.upper()
+    cache_key = f"{key}:{date}" if date else key
 
     # cache hits are free — no rate limit check needed
-    cached = _cache_get(key)
+    cached = _cache_get(cache_key)
     if cached is not None:
-        log.debug("Cache hit for %s", key)
+        log.debug("Cache hit for %s", cache_key)
         if not cached.get("demo"):
             _refresh_timing(cached)
         return cached
@@ -165,11 +167,11 @@ async def fetch_flight(flight_iata: str, user_id: Optional[int] = None) -> Optio
         if err:
             raise RateLimitError(err)
 
-        data = await _provider.fetch(key)
+        data = await _provider.fetch(key, date=date)
         if data:
             _record_api_call(user_id)
             log.info("Live data for %s (%d legs)", key, len(data.get("legs", [])))
-            _cache_set(key, data)
+            _cache_set(cache_key, data)
             return data
         log.warning("Provider returned no data for %s, falling back to demo", key)
 
