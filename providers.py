@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from zoneinfo import ZoneInfo
 
@@ -195,33 +196,91 @@ def _group_flights_by_day(flights: list[dict], dep_time_key: str) -> dict[str, l
     return groups
 
 
-def _select_best_day(day_groups: dict[str, list[dict]], status_extractor) -> tuple[str, list[dict]]:
-    """Pick the most relevant day's flights.
+def _flight_distance_seconds(
+    status: str,
+    dep_utc: datetime | None,
+    arr_utc: datetime | None,
+    now: datetime,
+) -> float:
+    """How far (in seconds) a flight's event window is from ``now``.
 
-    Priority:
-      1. Any day with an in-air flight
-      2. Closest upcoming scheduled flight
-      3. Most recently landed flight
+    Returns 0 if the flight is currently in progress (either explicitly marked
+    "In Air" or ``now`` falls between its departure and arrival times).
+    Otherwise returns the smaller absolute distance from ``now`` to either the
+    departure or the arrival timestamp. Past and future are treated
+    symmetrically so that a flight that landed 10 minutes ago beats one that
+    departs 10 hours from now.
+
+    If no timestamps are available, returns ``math.inf`` so the flight is
+    ranked last among those that do have timestamps.
     """
-    now = datetime.now(timezone.utc)
-    today_str = now.strftime("%Y-%m-%d")
+    if status == "In Air":
+        return 0.0
 
-    for date, flights in sorted(day_groups.items()):
-        if any(status_extractor(f) == "In Air" for f in flights):
-            return date, flights
+    if dep_utc and arr_utc and dep_utc <= now <= arr_utc:
+        return 0.0
 
-    future_days = {d: fs for d, fs in day_groups.items() if d >= today_str}
-    if future_days:
-        closest = min(future_days.keys())
-        return closest, future_days[closest]
+    candidates: list[float] = []
+    if dep_utc is not None:
+        candidates.append(abs((dep_utc - now).total_seconds()))
+    if arr_utc is not None:
+        candidates.append(abs((arr_utc - now).total_seconds()))
 
-    past_days = {d: fs for d, fs in day_groups.items() if d < today_str}
-    if past_days:
-        latest = max(past_days.keys())
-        return latest, past_days[latest]
+    if not candidates:
+        return math.inf
 
-    first_key = next(iter(day_groups))
-    return first_key, day_groups[first_key]
+    return min(candidates)
+
+
+FeatureFn = Callable[[dict], tuple[str, Optional[datetime], Optional[datetime]]]
+
+
+def _select_best_day(
+    day_groups: dict[str, list[dict]],
+    feature_fn: FeatureFn,
+    now: datetime | None = None,
+) -> tuple[str, list[dict]]:
+    """Pick the most relevant day's flights by temporal proximity to ``now``.
+
+    For each day we take the single flight that is temporally closest to the
+    current moment (see ``_flight_distance_seconds``) and use its distance as
+    the day's score. The day with the smallest score wins.
+
+    Status is only used for two narrow cases:
+      * An "In Air" flight always scores 0 (it's happening right now).
+      * A day containing flights with no timestamps falls back to the legacy
+        status ordering so we still do something sensible if the provider
+        omits timing data.
+
+    This is intentionally *symmetric* about "now": a flight that landed 15
+    minutes ago beats one that departs 8 hours from now, because the
+    just-landed one matches the real-world use case (meeting someone who just
+    got off their plane) far better than "always prefer the next upcoming
+    flight" did.
+    """
+    if not day_groups:
+        raise ValueError("day_groups must not be empty")
+
+    now = now or datetime.now(timezone.utc)
+    known_days = {d: fs for d, fs in day_groups.items() if d != "unknown"}
+    candidate_days = known_days or day_groups
+
+    STATUS_FALLBACK = {"In Air": 0, "Scheduled": 1, "Landed": 2}
+
+    def day_score(date: str, flights: list[dict]) -> tuple[float, int, str]:
+        best_distance = math.inf
+        best_status_rank = 9
+        for f in flights:
+            status, dep_utc, arr_utc = feature_fn(f)
+            distance = _flight_distance_seconds(status, dep_utc, arr_utc, now)
+            status_rank = STATUS_FALLBACK.get(status, 9)
+            if (distance, status_rank) < (best_distance, best_status_rank):
+                best_distance = distance
+                best_status_rank = status_rank
+        return best_distance, best_status_rank, date
+
+    best_date = min(candidate_days.keys(), key=lambda d: day_score(d, candidate_days[d]))
+    return best_date, candidate_days[best_date]
 
 
 def _available_dates(day_groups: dict[str, list[dict]]) -> list[str]:
@@ -276,14 +335,25 @@ class AviationStackProvider(FlightProvider):
             d = dep[:10] if len(dep) >= 10 else "unknown"
             day_groups.setdefault(d, []).append(f)
 
-        def as_status(f):
+        def as_features(f):
             raw = (f.get("flight_status") or "unknown").lower()
-            return STATUS_MAP.get(raw, raw.title())
+            status = STATUS_MAP.get(raw, raw.title())
+            dep = f.get("departure") or {}
+            arr = f.get("arrival") or {}
+            dep_utc = local_iso_to_utc(
+                dep.get("actual") or dep.get("estimated") or dep.get("scheduled", ""),
+                dep.get("iata", ""),
+            )
+            arr_utc = local_iso_to_utc(
+                arr.get("actual") or arr.get("estimated") or arr.get("scheduled", ""),
+                arr.get("iata", ""),
+            )
+            return status, dep_utc, arr_utc
 
         if date and date in day_groups:
             selected_date, selected_flights = date, day_groups[date]
         else:
-            selected_date, selected_flights = _select_best_day(day_groups, as_status)
+            selected_date, selected_flights = _select_best_day(day_groups, as_features)
         selected_flights.sort(key=lambda f: (f.get("departure") or {}).get("scheduled", ""))
 
         airline = (selected_flights[0].get("airline") or {}).get("name", "")
@@ -388,13 +458,24 @@ class FlightAwareProvider(FlightProvider):
         dep_key = "scheduled_out"
         day_groups = _group_flights_by_day(flights, dep_key)
 
-        def fa_status(f):
-            return FlightAwareProvider._derive_status(f)
+        def fa_features(f):
+            status = FlightAwareProvider._derive_status(f)
+            dep_utc = (
+                _parse_utc(f.get("actual_out") or f.get("actual_off"))
+                or _parse_utc(f.get("estimated_out") or f.get("estimated_off"))
+                or _parse_utc(f.get("scheduled_out") or f.get("scheduled_off"))
+            )
+            arr_utc = (
+                _parse_utc(f.get("actual_in") or f.get("actual_on"))
+                or _parse_utc(f.get("estimated_in") or f.get("estimated_on"))
+                or _parse_utc(f.get("scheduled_in") or f.get("scheduled_on"))
+            )
+            return status, dep_utc, arr_utc
 
         if date and date in day_groups:
             selected_date, selected_flights = date, day_groups[date]
         else:
-            selected_date, selected_flights = _select_best_day(day_groups, fa_status)
+            selected_date, selected_flights = _select_best_day(day_groups, fa_features)
         selected_flights.sort(key=lambda f: f.get("scheduled_out") or f.get("scheduled_off") or "")
 
         first = selected_flights[0]
