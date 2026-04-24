@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -21,7 +22,7 @@ from providers import (
     compute_leg_timing, local_iso_to_utc, overall_status,
     _parse_utc, _utc_to_local_iso, _pick_best_flight,
     _group_flights_by_day, _select_best_day, _available_dates,
-    _tz_abbrev,
+    _flight_distance_seconds, _tz_abbrev,
 )
 
 
@@ -328,6 +329,12 @@ SAMPLE_FA_FLIGHT = {
 class TestDateSelection:
     """Tests for _group_flights_by_day, _select_best_day, _available_dates."""
 
+    # helper to build a (status, dep_utc, arr_utc) feature_fn from dicts that
+    # already contain those keys — keeps individual tests readable.
+    @staticmethod
+    def _feat(f):
+        return f["s"], f.get("dep"), f.get("arr")
+
     def test_group_by_day(self):
         flights = [
             {"scheduled_out": "2026-04-20T10:00:00Z"},
@@ -345,30 +352,171 @@ class TestDateSelection:
         assert "unknown" in groups
 
     def test_select_prefers_in_air(self):
+        now = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
         groups = {
-            "2026-04-20": [{"s": "Landed"}],
-            "2026-04-21": [{"s": "In Air"}],
-            "2026-04-22": [{"s": "Scheduled"}],
+            "2026-04-20": [{"s": "Landed",
+                            "dep": now - timedelta(days=1, hours=5),
+                            "arr": now - timedelta(days=1, hours=2)}],
+            "2026-04-21": [{"s": "In Air",
+                            "dep": now - timedelta(hours=1),
+                            "arr": now + timedelta(hours=2)}],
+            "2026-04-22": [{"s": "Scheduled",
+                            "dep": now + timedelta(days=1),
+                            "arr": now + timedelta(days=1, hours=3)}],
         }
-        date, flights = _select_best_day(groups, lambda f: f["s"])
+        date, flights = _select_best_day(groups, self._feat, now=now)
         assert date == "2026-04-21"
         assert flights[0]["s"] == "In Air"
 
-    def test_select_falls_back_to_upcoming(self):
+    def test_select_falls_back_to_upcoming_when_past_is_distant(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
         groups = {
-            "2026-04-19": [{"s": "Landed"}],
-            "2099-12-01": [{"s": "Scheduled"}],
+            "2026-04-19": [{"s": "Landed",
+                            "dep": now - timedelta(days=30),
+                            "arr": now - timedelta(days=30) + timedelta(hours=3)}],
+            "2099-12-01": [{"s": "Scheduled",
+                            "dep": now + timedelta(days=10),
+                            "arr": now + timedelta(days=10, hours=3)}],
         }
-        date, flights = _select_best_day(groups, lambda f: f["s"])
+        date, _ = _select_best_day(groups, self._feat, now=now)
         assert date == "2099-12-01"
 
     def test_select_falls_back_to_most_recent(self):
+        now = datetime(2020, 12, 31, 12, 0, tzinfo=timezone.utc)
         groups = {
-            "2020-01-01": [{"s": "Landed"}],
-            "2020-06-15": [{"s": "Landed"}],
+            "2020-01-01": [{"s": "Landed",
+                            "dep": datetime(2020, 1, 1, 10, tzinfo=timezone.utc),
+                            "arr": datetime(2020, 1, 1, 13, tzinfo=timezone.utc)}],
+            "2020-06-15": [{"s": "Landed",
+                            "dep": datetime(2020, 6, 15, 10, tzinfo=timezone.utc),
+                            "arr": datetime(2020, 6, 15, 13, tzinfo=timezone.utc)}],
         }
-        date, flights = _select_best_day(groups, lambda f: f["s"])
+        date, _ = _select_best_day(groups, self._feat, now=now)
         assert date == "2020-06-15"
+
+    def test_select_just_landed_beats_tomorrow_scheduled(self):
+        """The original bug: someone's flight lands and their ride checks
+        the bot, but the bot kept showing tomorrow's flight instead of the
+        one that just touched down."""
+        now = datetime(2026, 4, 20, 18, 0, tzinfo=timezone.utc)
+        groups = {
+            "2026-04-20": [{
+                "s": "Landed",
+                "dep": now - timedelta(hours=3),
+                "arr": now - timedelta(minutes=15),  # landed 15 min ago
+            }],
+            "2026-04-21": [{
+                "s": "Scheduled",
+                "dep": now + timedelta(hours=20),
+                "arr": now + timedelta(hours=23),
+            }],
+        }
+        date, flights = _select_best_day(groups, self._feat, now=now)
+        assert date == "2026-04-20"
+        assert flights[0]["s"] == "Landed"
+
+    def test_select_near_future_beats_distant_past(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        groups = {
+            "2026-04-14": [{
+                "s": "Landed",
+                "dep": now - timedelta(days=6),
+                "arr": now - timedelta(days=6) + timedelta(hours=3),
+            }],
+            "2026-04-20": [{
+                "s": "Scheduled",
+                "dep": now + timedelta(hours=2),
+                "arr": now + timedelta(hours=5),
+            }],
+        }
+        date, _ = _select_best_day(groups, self._feat, now=now)
+        assert date == "2026-04-20"
+
+    def test_select_distance_is_symmetric_around_now(self):
+        """A flight that landed 2h ago and one that departs in 3h: the one
+        2h ago is closer and should win."""
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        groups = {
+            "2026-04-20-past": [{
+                "s": "Landed",
+                "dep": now - timedelta(hours=5),
+                "arr": now - timedelta(hours=2),
+            }],
+            "2026-04-20-future": [{
+                "s": "Scheduled",
+                "dep": now + timedelta(hours=3),
+                "arr": now + timedelta(hours=6),
+            }],
+        }
+        date, _ = _select_best_day(groups, self._feat, now=now)
+        assert date == "2026-04-20-past"
+
+    def test_select_now_inside_window_wins(self):
+        """Even if API doesn't label a flight 'In Air', if `now` falls
+        between its dep/arr times it's happening and scores 0."""
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        groups = {
+            "2026-04-20": [{
+                "s": "Scheduled",  # provider mislabel — but times say otherwise
+                "dep": now - timedelta(hours=1),
+                "arr": now + timedelta(hours=1),
+            }],
+            "2026-04-21": [{
+                "s": "Scheduled",
+                "dep": now + timedelta(hours=6),
+                "arr": now + timedelta(hours=9),
+            }],
+        }
+        date, _ = _select_best_day(groups, self._feat, now=now)
+        assert date == "2026-04-20"
+
+    def test_select_per_day_picks_closest_flight(self):
+        """A day with a duplicate closer to `now` should beat a day whose
+        closest flight is farther from `now`."""
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        groups = {
+            "2026-04-19": [
+                # old landed flight but also a late-evening one just ~30 min
+                # back — still the closest event to "now"
+                {"s": "Landed",
+                 "dep": now - timedelta(days=1, hours=5),
+                 "arr": now - timedelta(days=1, hours=2)},
+                {"s": "Landed",
+                 "dep": now - timedelta(hours=4),
+                 "arr": now - timedelta(minutes=30)},
+            ],
+            "2026-04-21": [{
+                "s": "Scheduled",
+                "dep": now + timedelta(hours=10),
+                "arr": now + timedelta(hours=13),
+            }],
+        }
+        date, _ = _select_best_day(groups, self._feat, now=now)
+        assert date == "2026-04-19"
+
+    def test_select_falls_back_to_status_when_no_timestamps(self):
+        """When a provider omits timestamps, we still prefer Scheduled over
+        Landed (legacy behaviour) rather than picking arbitrarily."""
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        groups = {
+            "2026-04-19": [{"s": "Landed"}],
+            "2026-04-21": [{"s": "Scheduled"}],
+        }
+        date, _ = _select_best_day(groups, self._feat, now=now)
+        assert date == "2026-04-21"
+
+    def test_select_ignores_unknown_date_bucket(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        groups = {
+            "unknown": [{"s": "Scheduled"}],
+            "2026-04-20": [{
+                "s": "Scheduled",
+                "dep": now + timedelta(hours=1),
+                "arr": now + timedelta(hours=3),
+            }],
+        }
+        date, _ = _select_best_day(groups, self._feat, now=now)
+        assert date == "2026-04-20"
 
     def test_available_dates_sorted(self):
         groups = {"2026-04-22": [], "2026-04-20": [], "2026-04-21": [], "unknown": []}
@@ -378,6 +526,60 @@ class TestDateSelection:
     def test_available_dates_excludes_unknown(self):
         groups = {"unknown": []}
         assert _available_dates(groups) == []
+
+
+class TestFlightDistanceSeconds:
+    def test_in_air_is_zero(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        assert _flight_distance_seconds(
+            "In Air",
+            now - timedelta(hours=5),
+            now + timedelta(hours=5),
+            now,
+        ) == 0.0
+
+    def test_now_inside_window_is_zero(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        assert _flight_distance_seconds(
+            "Scheduled",
+            now - timedelta(minutes=10),
+            now + timedelta(minutes=10),
+            now,
+        ) == 0.0
+
+    def test_just_landed(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        d = _flight_distance_seconds(
+            "Landed",
+            now - timedelta(hours=3),
+            now - timedelta(minutes=15),
+            now,
+        )
+        assert d == 15 * 60
+
+    def test_upcoming(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        d = _flight_distance_seconds(
+            "Scheduled",
+            now + timedelta(hours=2),
+            now + timedelta(hours=5),
+            now,
+        )
+        assert d == 2 * 3600
+
+    def test_no_timestamps_is_inf(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        assert _flight_distance_seconds("Scheduled", None, None, now) == math.inf
+
+    def test_only_dep_available(self):
+        now = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+        d = _flight_distance_seconds(
+            "Scheduled",
+            now + timedelta(hours=4),
+            None,
+            now,
+        )
+        assert d == 4 * 3600
 
 
 class TestTzAbbrev:
